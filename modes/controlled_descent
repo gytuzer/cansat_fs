@@ -1,0 +1,87 @@
+import time
+import json
+import redis
+import threading
+import random  # dummy gyro input
+
+REDIS_HOST = "localhost"
+REDIS_PORT = 6379
+flags_file = "flags.json"
+
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+def load_flags():
+    with open(flags_file, "r") as f:
+        return json.load(f)
+
+def save_flags(flags):
+    with open(flags_file, "w") as f:
+        json.dump(flags, f, indent=2)
+
+class PID:
+    def __init__(self, kp, ki, kd, setpoint=0.0):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.setpoint = setpoint
+        self.integral = 0.0
+        self.last_error = 0.0
+
+    def compute(self, measurement, dt=0.1):
+        error = self.setpoint - measurement
+        self.integral += error * dt
+        derivative = (error - self.last_error) / dt if dt > 0 else 0.0
+        self.last_error = error
+        return self.kp * error + self.ki * self.integral + self.kd * derivative
+
+def pid_loop():
+    """Dummy PID for 3-axis reaction wheel control."""
+    pid_x = PID(0.6, 0.1, 0.05)
+    pid_y = PID(0.6, 0.1, 0.05)
+    pid_z = PID(0.6, 0.1, 0.05)
+
+    while True:
+        flags = load_flags()
+        if flags.get("mode") != 5:
+            break
+
+        if flags.get("delv0") == 1:  # acceleration zero -> shutdown control
+            r.rpush("log_queue", "[Controlled Descent] Acceleration=0, shutting down control system")
+            break
+
+        # Dummy gyro inputs (replace with real gyro from Redis later)
+        gx = random.uniform(-1, 1)
+        gy = random.uniform(-1, 1)
+        gz = random.uniform(-1, 1)
+
+        # Compute PID outputs
+        torque_x = pid_x.compute(gx)
+        torque_y = pid_y.compute(gy)
+        torque_z = pid_z.compute(gz)
+
+        # Log outputs
+        log_msg = f"[PID] Gyro=({gx:.2f},{gy:.2f},{gz:.2f}) -> Torque=({torque_x:.2f},{torque_y:.2f},{torque_z:.2f})"
+        r.rpush("log_queue", log_msg)
+        print(log_msg)
+
+        time.sleep(0.1)  # 10 Hz loop
+
+def run_mode5():
+    """Main entry for Mode 5: Controlled Descent."""
+    flags = load_flags()
+    flags["mode"] = 5
+    flags["delv0"] = 0  # 0 until acceleration=0
+    save_flags(flags)
+
+    r.rpush("log_queue", "Mode 5 started: Controlled Descent with 3-axis PID")
+
+    t = threading.Thread(target=pid_loop, daemon=True)
+    t.start()
+
+    # Keep alive until mode changes
+    while flags.get("mode") == 5:
+        flags = load_flags()
+        time.sleep(1)
+
+if __name__ == "__main__":
+    run_mode5()

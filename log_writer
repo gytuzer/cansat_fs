@@ -1,0 +1,74 @@
+# logwriter.py
+import redis
+import json
+import time
+import csv
+import os
+from datetime import datetime
+
+LOG_DIR = "logs"
+MISSION_FILE = "mission_id.json"
+
+r = redis.Redis(host="localhost", port=6379, db=0)
+
+# --- Helpers ---
+def get_mission_id():
+    """Keep track of missions across power cycles"""
+    if not os.path.exists(MISSION_FILE):
+        with open(MISSION_FILE, "w") as f:
+            json.dump({"mission_id": 1}, f)
+        return 1
+
+    with open(MISSION_FILE, "r") as f:
+        data = json.load(f)
+        mid = data.get("mission_id", 1)
+
+    data["mission_id"] = mid + 1
+    with open(MISSION_FILE, "w") as f:
+        json.dump(data, f)
+    return mid
+
+def create_log_file(mission_id):
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+    filename = os.path.join(LOG_DIR, f"mission_{mission_id:03d}.csv")
+    return filename
+
+# --- Logging ---
+def write_event(writer, channel, payload):
+    ts = datetime.utcnow().isoformat()
+    row = {
+        "timestamp": ts,
+        "channel": channel,
+        "data": json.dumps(payload)
+    }
+    writer.writerow(row)
+
+# --- Redis Listener ---
+def redis_listener(logfile):
+    pubsub = r.pubsub()
+    pubsub.subscribe("imu", "bme", "bmp", "adc", "gps", "commands", "override")
+
+    with open(logfile, "w", newline="") as csvfile:
+        fieldnames = ["timestamp", "channel", "data"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # Register power-on
+        write_event(writer, "system", {"event": "power_on"})
+        csvfile.flush()
+
+        for msg in pubsub.listen():
+            if msg["type"] != "message":
+                continue
+            channel = msg["channel"].decode()
+            payload = json.loads(msg["data"].decode())
+            write_event(writer, channel, payload["data"])
+            csvfile.flush()  # Flush often so data survives power loss
+
+# --- Main ---
+if __name__ == "__main__":
+    mid = get_mission_id()
+    logfile = create_log_file(mid)
+    print(f"[LogWriter] Logging to {logfile}")
+    redis_listener(logfile)

@@ -1,0 +1,32 @@
+{
+  "powered_on": 0,
+  "mode": 0,
+  "subflags": {
+    "boot": {
+      "handshake": 0
+    },
+    "calibration": {
+      "wait": 0,
+      "calib_complete": 0
+    },
+    "arm_launch": {
+      "cam": 0,
+      "data": 0,
+      "launch_detect": 0,
+      "apogee_detect": 0
+    },
+    "descent": {
+      "drogue": 0,
+      "cs_500m": 0
+    },
+    "controlled_descent": {
+      "delv0": 0
+    },
+    "touchdown": {
+      "beacon": 0
+    },
+    "shutdown": {
+      "cleanup": 0
+    }
+  }
+}
